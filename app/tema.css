@@ -139,3 +139,9 @@ button:focus-visible,.nav:focus-visible,.chip:focus-visible,.dia:focus-visible,a
 .kpi .val{font-size:clamp(22px,14cqi,32px);text-overflow:clip}
 .hello h2{font-family:var(--f-titulo);font-size:26px;font-weight:700;letter-spacing:.005em}
 .brand b{white-space:normal;overflow:visible;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+
+/* iconos duotono: trazo en el color del texto, relleno suave en naranja de marca */
+.ic .d{fill:var(--brand);opacity:.28}
+.nav.on .ic .d{opacity:.55}
+.kpi .ico .ic .d,.btn-p .ic .d{fill:currentColor;opacity:.3}
+#side .ic .d{fill:var(--brand);opacity:.4}
