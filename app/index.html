@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' file: data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; font-src 'self'; frame-src 'self' about:">
+<title>Taller</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="extra.css">
+</head>
+<body>
+<div id="bar"></div><div id="block"></div>
+
+<aside id="side">
+  <div class="brand"><div class="logo" id="s-logo"></div><div style="min-width:0"><b id="b-name">Taller</b><small>Sistema de gestión</small></div></div>
+  <div class="navg">Operación</div>
+  <button class="nav" data-v="inicio"></button>
+  <button class="nav" data-v="trabajos"></button>
+  <button class="nav" data-v="inventario"></button>
+  <div class="navg">Caja</div>
+  <button class="nav" data-v="caja"></button>
+  <button class="nav" data-v="movimientos"></button>
+  <button class="nav" data-v="planilla"></button>
+  <button class="nav" data-v="reportes"></button>
+  <div class="navg">Registros</div>
+  <button class="nav" data-v="clientes"></button>
+  <button class="nav" data-v="motos"></button>
+  <button class="nav" data-v="garantias"></button>
+  <div class="navg">Sistema</div>
+  <button class="nav" data-v="config"></button>
+  <button class="nav" data-v="respaldos"></button>
+  <div class="side-foot"><span class="dot"></span><span id="s-foot">Base de datos local · sin internet</span></div>
+</aside>
+
+<div id="app">
+  <header id="top">
+    <div style="min-width:0"><h1 id="h-t">Cargando…</h1><div class="sub" id="h-s"></div></div>
+    <div class="acts"><div id="h-extra"></div><div id="h-act"></div></div>
+  </header>
+  <main id="main"></main>
+</div>
+
+<div class="ov" id="modal"></div>
+<div class="ov" id="dlg2"></div>
+<div id="toast"></div>
+<datalist id="dl-inv"></datalist>
+<iframe id="print" title="impresión" style="position:fixed;width:0;height:0;border:0;left:-10px;top:-10px"></iframe>
+<script src="app.js"></script>
+</body>
+</html>

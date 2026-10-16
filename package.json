@@ -1,0 +1,69 @@
+{
+  "name": "taller",
+  "productName": "Taller",
+  "version": "1.1.0",
+  "description": "Sistema de gestión para taller de motos",
+  "main": "main.js",
+  "author": "Taller",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/JosIsInsane/taller-motos.git"
+  },
+  "scripts": {
+    "start": "electron .",
+    "test": "node test/backend.test.js",
+    "instalador": "electron-builder --win nsis --publish never",
+    "publicar": "electron-builder --win nsis --publish always"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9",
+    "sql.js": "^1.10.3",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "hn.taller.app",
+    "productName": "Taller",
+    "directories": {
+      "output": "instalador"
+    },
+    "files": [
+      "app/**",
+      "main.js",
+      "preload.js",
+      "backend.js",
+      "package.json",
+      "!node_modules/sql.js/dist/{sql-asm*,worker*,*debug*,sql-wasm-browser*,*.zip}",
+      "!node_modules/xlsx/{xlsx.mjs,xlsx.flow.js,bin,types,dist/xlsx*,dist/*.map,dist/*.mjs,dist/*.d.ts}"
+    ],
+    "asarUnpack": [
+      "**/*.wasm"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Taller",
+      "artifactName": "Instalar-Taller-${version}.exe",
+      "deleteAppDataOnUninstall": false
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "JosIsInsane",
+        "repo": "taller-motos",
+        "releaseType": "release"
+      }
+    ]
+  }
+}
