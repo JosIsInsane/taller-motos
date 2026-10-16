@@ -146,13 +146,16 @@ const VIEWS = {
 document.querySelectorAll('.nav').forEach(b => { const V = VIEWS[b.dataset.v]; b.innerHTML = ic(V.i, 18) + `<span>${V.t}</span>`; b.onclick = () => ir(b.dataset.v); });
 $('s-logo').innerHTML = ic('wrench', 20, 2.2);
 
+/** Si hay un trabajo con cambios sin guardar, pregunta qué hacer. Devuelve false si el usuario decide seguir editando. */
+async function puedeSalirDelTrabajo() {
+  if (VISTA !== 'trabajo' || !SUCIO) return true;
+  const r = await elegir('Cambios sin guardar', 'Este trabajo tiene cambios que no guardaste.', [{ t: 'Descartar', v: 'no', cls: 'btn-d' }, { t: 'Seguir editando', v: null }, { t: ic('save', 16) + 'Guardar', v: 'si', cls: 'btn-p' }]);
+  if (!r) return false;
+  if (r === 'si') { const ok = await guardarTrabajo(true); if (!ok) return false; }
+  SUCIO = false; return true;
+}
 async function ir(v, forzar) {
-  if (!forzar && VISTA === 'trabajo' && SUCIO && v !== 'trabajo') {
-    const r = await elegir('Cambios sin guardar', 'Este trabajo tiene cambios que no guardaste.', [{ t: 'Descartar', v: 'no', cls: 'btn-d' }, { t: 'Seguir editando', v: null }, { t: ic('save', 16) + 'Guardar', v: 'si', cls: 'btn-p' }]);
-    if (!r) return;
-    if (r === 'si') { const ok = await guardarTrabajo(true); if (!ok) return; }
-    SUCIO = false;
-  }
+  if (!forzar && v !== 'trabajo' && !await puedeSalirDelTrabajo()) return;
   VISTA = v; const V = VIEWS[v];
   document.querySelectorAll('.nav').forEach(b => b.classList.toggle('on', b.dataset.v === (V.nav || v)));
   head(V.t || '', V.s || ''); accion(); cerrarModal(); $('h-extra').innerHTML = ''; window.scrollTo(0, 0);
@@ -184,7 +187,7 @@ const CAMPOS = {
   moto: [['placa', 'Placa'], ['cliente_id', 'Dueño', 'sel', () => (CACHE.clientes || []).map(c => ({ v: c.id, t: c.nombre + (c.telefono ? ' · ' + c.telefono : '') }))],
     ['marca', 'Marca'], ['modelo', 'Modelo'], ['anio', 'Año', 'num'], ['cc', 'Cilindraje (cc)', 'num'], ['color', 'Color'], ['vin', 'Chasis / VIN'], ['notas', 'Notas', 'area']],
   inventario: [['codigo', 'Código (opcional)'], ['descripcion', 'Descripción'], ['categoria', 'Categoría', 'sel', () => INIT.config.catRepuestos], ['compatible', 'Compatible con'],
-    ['proveedor', 'Proveedor'], ['ubicacion', 'Ubicación en bodega'], ['costo', 'Costo unitario (L)', 'num'], ['precio', 'Precio de venta (L)', 'num'], ['stock_inicial', 'Stock inicial', 'num'], ['minimo', 'Stock mínimo', 'num']],
+    ['proveedor', 'Proveedor'], ['ubicacion', 'Ubicación en bodega'], ['costo', 'Costo unitario (L)', 'num'], ['precio', 'Precio de venta (L)', 'num'], ['stock_inicial', 'Existencia inicial (al registrarlo; las compras y ventas se suman solas)', 'num'], ['minimo', 'Stock mínimo', 'num']],
   gasto: [['fecha', 'Fecha', 'date'], ['categoria', 'Categoría', 'sel', () => INIT.config.catGastos], ['monto', 'Monto (L)', 'num'], ['metodo', 'Método de pago', 'sel', METODOS], ['descripcion', 'Descripción', 'area']],
   vale: [['fecha', 'Fecha', 'date'], ['empleado_id', 'Empleado', 'sel', EMPS], ['monto', 'Monto (L)', 'num'], ['metodo', 'Método', 'sel', METODOS], ['nota', 'Nota', 'area']],
   compra: [['fecha', 'Fecha de compra', 'date'], ['inventario_id', 'Repuesto del inventario (opcional)', 'sel', () => (CACHE.inventario || []).map(i => ({ v: i.id, t: (i.codigo ? i.codigo + ' · ' : '') + i.descripcion }))],
@@ -259,7 +262,7 @@ async function vInicio() {
   if (p.garantiasPorVencer) al.push({ i: 'shield', t: 'blue', x: `${p.garantiasPorVencer} garantía(s) vencen en los próximos 7 días`, a: "ir('garantias')" });
   const est = Object.entries(p.porEstado); const mx = Math.max(1, ...est.map(e => e[1]));
   $('main').innerHTML = `
-    <div class="hello"><div><h2>${saludo} 👋</h2><p>Así va ${esc(INIT.config.taller)} hoy.</p></div></div>
+    <div class="hello"><div><h2>${saludo}</h2><p>Así va ${esc(INIT.config.taller)} hoy.</p></div></div>
     <div class="kpis">
       ${kpi('Cobrado hoy', L(c.numeros.ing), 'cash', 'green', `Efectivo ${L(c.numeros.ingEf)} · Transf. ${L(c.numeros.ingTr)}`)}
       ${kpi('Neto de la semana', L(s.neto), 'wallet', 'orange', `Ingresos ${L(s.ing)} · Egresos ${L(s.egr)}`, s.neto < 0 ? 'neg' : '')}
@@ -269,7 +272,7 @@ async function vInicio() {
     <div class="cols">
       <div>
         ${tabla(p.activos, [
-          { h: 'Trabajo', v: t => `<b>${esc(t.numero)}</b><div class="mut small">${F(t.fecha)} · ${t.dias} día(s)</div>` },
+          { h: 'Trabajo', v: t => `<b class="ficha">${esc(t.numero)}</b><div class="mut small">${F(t.fecha)} · ${t.dias} día(s)</div>` },
           { h: 'Cliente', v: t => esc(t.cliente || '—') }, { h: 'Moto', v: t => plate(t.placa) + (t.moto ? `<div class="mut small">${esc(t.moto)}</div>` : '') },
           { h: 'Estado', v: t => pEst(t.estado) }, { h: 'Saldo', c: 'r', v: t => t.saldo > 0.004 ? `<span class="neg">${L(t.saldo)}</span>` : `<span class="mut">${L(0)}</span>` },
         ], { click: t => `abrirTrabajo(${t.id})`, vacio: 'No hay motos en el taller', icono: 'bike', vsub: 'Tocá "Nuevo trabajo" para registrar una.',
@@ -320,7 +323,7 @@ function pTrabajos() {
     <div class="toolbar">${buscador('tq', 'Buscar por cliente, teléfono, placa, moto, trabajo o número…', 'tq', 'pTrabajos')}
       <div class="chips">${[['activos', 'En taller'], ['Listo', 'Listos'], ['saldo', 'Con saldo'], ['Entregado', 'Entregados'], ['todos', 'Todos']].map(([k, t]) => `<span class="chip ${k === f ? 'on' : ''}" onclick="SUB.trab='${k}';pTrabajos()">${t} <b>${n(k)}</b></span>`).join('')}</div></div>
     ${tabla(l, [
-      { h: 'Trabajo', v: t => `<b>${esc(t.numero)}</b><div class="mut small">${F(t.fecha)}</div>` },
+      { h: 'Trabajo', v: t => `<b class="ficha">${esc(t.numero)}</b><div class="mut small">${F(t.fecha)}</div>` },
       { h: 'Cliente', v: t => `<b style="font-weight:600">${esc(t.cliente || '—')}</b>${t.telefono ? `<div class="mut small">${esc(t.telefono)}</div>` : ''}` },
       { h: 'Moto', v: t => plate(t.placa) + (t.moto ? `<div class="mut small">${esc(t.moto)}</div>` : '') },
       { h: 'Qué se hace', v: t => `<div class="small" style="max-width:280px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(t.descripcion || '—')}</div>${t.garantia_de ? `<div class="small" style="color:#1D4ED8">${ic('shield', 12)} Reclamo de garantía</div>` : ''}` },
@@ -331,7 +334,8 @@ function pTrabajos() {
 }
 
 // ================================================================ TRABAJO (editor único: nuevo y existente)
-function nuevoTrabajo() {
+async function nuevoTrabajo() {
+  if (!await puedeSalirDelTrabajo()) return;
   ACTUAL = null;
   E = { id: null, fecha: INIT.hoy, cliente_id: null, cliente_nombre: '', cliente_tel: '', placa: '', marca: '', modelo: '', anio: '', color: '', km: '',
     descripcion: '', falla: '', estado_recibe: '', mecanico_id: '', mecanico2_id: '', reparto: 50, mano_obra: '', descuento: '', garantia_dias: INIT.config.garantiaDefecto, garantia_cubre: INIT.config.coberturaDefecto,
@@ -339,6 +343,8 @@ function nuevoTrabajo() {
   SUCIO = false; ir('trabajo', true);
 }
 async function abrirTrabajo(id) {
+  if (ACTUAL && ACTUAL.id === id && VISTA === 'trabajo') return;
+  if (!await puedeSalirDelTrabajo()) return;
   const t = await carga(run('trabajo', id)); ACTUAL = t; cargarEditor(t); SUCIO = false; ir('trabajo', true);
 }
 function cargarEditor(t) {
@@ -548,17 +554,20 @@ function pintarCobro() {
           <button class="btn btn-p w" onclick="cobrar()">${ic('cash', 17)}Registrar pago</button></div>
         <div class="small mut" style="margin-top:10px;display:flex;justify-content:space-between"><span>Ganancia estimada</span><b class="num" style="color:var(--ink2)">${L(t.utilidad)}</b></div>`}`;
 }
+let GUARDANDO = false;
 async function guardarTrabajo(silencioso) {
+  if (GUARDANDO) return false;
   const d = Object.assign({}, E);
   if (!d.descripcion.trim() && !d.repuestos.some(r => r.descripcion) && !num(d.mano_obra)) { toast('Escribí qué se le hace a la moto', true); return false; }
   const nuevo = !d.id;
+  GUARDANDO = true;
   try {
     const id = await carga(run('guardarTrabajo', d));
     SUCIO = false; invalidar('inventario', 'trabajos');
     const t = await run('trabajo', id); ACTUAL = t; cargarEditor(t);
     if (!silencioso) { toast(nuevo ? `Trabajo ${t.numero} creado` : 'Cambios guardados'); ir('trabajo', true); }
     return true;
-  } catch (e) { return false; }
+  } catch (e) { return false; } finally { GUARDANDO = false; }
 }
 async function asegurarGuardado() { if (!E.id || SUCIO) return guardarTrabajo(true); return true; }
 async function cambiarEstado(e) {
@@ -727,7 +736,7 @@ async function vMovimientos() {
     gastos: [{ h: 'Fecha', v: x => F(x.fecha) }, { h: 'Categoría', v: x => `<span class="tag">${ic('tag', 12)}${esc(x.categoria || '—')}</span>` }, { h: 'Descripción', v: x => esc(x.descripcion) || '<span class="mut">—</span>' }, { h: 'Método', v: x => met(x.metodo) }, { h: 'Monto', c: 'r', v: x => `<b>${L(x.monto)}</b>` }],
     vales: [{ h: 'Fecha', v: x => F(x.fecha) }, { h: 'Empleado', v: x => who(x.empleado) }, { h: 'Nota', v: x => esc(x.nota) || '<span class="mut">—</span>' }, { h: 'Método', v: x => met(x.metodo) }, { h: 'Monto', c: 'r', v: x => `<b>${L(x.monto)}</b>` }],
     compras: [{ h: 'Fecha', v: x => F(x.fecha) }, { h: 'Repuesto', v: x => `<b style="font-weight:600">${esc(x.descripcion)}</b>${x.codigo ? `<div class="small mut code">${esc(x.codigo)}</div>` : ''}` }, { h: 'Proveedor', v: x => esc(x.proveedor) || '<span class="mut">—</span>' }, { h: 'Cantidad', c: 'r', v: x => `${x.cantidad} × ${L(x.costo)}` }, { h: 'Método', v: x => met(x.metodo) }, { h: 'Estado', v: x => pill(x.estado, x.estado === 'Pagado' ? 'green' : 'red') }, { h: 'Total', c: 'r', v: x => `<b>${L(x.total)}</b>` }],
-    pagos: [{ h: 'Fecha', v: x => F(x.fecha) }, { h: 'Trabajo', v: x => `<b>${esc(x.numero)}</b>` }, { h: 'Cliente', v: x => esc(x.cliente || '—') }, { h: 'Nota', v: x => esc(x.nota) || '<span class="mut">—</span>' }, { h: 'Método', v: x => met(x.metodo) }, { h: 'Monto', c: 'r', v: x => `<b>${L(x.monto)}</b>` }],
+    pagos: [{ h: 'Fecha', v: x => F(x.fecha) }, { h: 'Trabajo', v: x => `<b class="ficha">${esc(x.numero)}</b>` }, { h: 'Cliente', v: x => esc(x.cliente || '—') }, { h: 'Nota', v: x => esc(x.nota) || '<span class="mut">—</span>' }, { h: 'Método', v: x => met(x.metodo) }, { h: 'Monto', c: 'r', v: x => `<b>${L(x.monto)}</b>` }],
   };
   $('main').innerHTML = `
     <div class="tabs">${TABS.map(([kk, t, i]) => `<button class="${kk === s ? 'on' : ''}" onclick="SUB.mov='${kk}';vMovimientos()">${ic(i, 16)}${t}</button>`).join('')}</div>
@@ -1004,7 +1013,7 @@ function alCambiarAct(a) { ACT = Object.assign(ACT || {}, a); pintarActCard(); p
 async function buscarAct() { ACT = Object.assign(ACT || {}, { estado: 'buscando' }); pintarActCard(); alCambiarAct(await sys('buscarActualizacion')); if (ACT.estado === 'al-dia') toast('Ya tenés la versión más reciente'); }
 async function instalarAct() {
   if (SUCIO && !await confirmar('Cambios sin guardar', 'Hay cambios sin guardar en el trabajo abierto. ¿Actualizar de todos modos?', 'Actualizar')) return;
-  toast('Guardando respaldo y actualizando…'); await sys('instalarActualizacion');
+  SUCIO = false; toast('Guardando respaldo y actualizando…'); await sys('instalarActualizacion');
 }
 async function respaldarAhora() { const f = await carga(sys('respaldarAhora')); toast('Respaldo guardado: ' + f.split(/[\\/]/).pop()); vRespaldos(); }
 async function cambiarCarpeta() { const d = await carga(sys('elegirCarpetaRespaldos')); if (d) { INIT = await run('init'); toast('Carpeta de respaldos cambiada'); vRespaldos(); } }
@@ -1015,6 +1024,7 @@ async function restaurar(ruta) {
 }
 
 // ================================================================ arranque
+window.addEventListener('beforeunload', e => { if (VISTA === 'trabajo' && SUCIO) { e.preventDefault(); e.returnValue = ''; } });
 if (window.taller && taller.alActualizar) { taller.alActualizar(alCambiarAct); sys('estadoActualizacion').then(alCambiarAct).catch(() => {}); }
 if (window.taller && taller.alRefrescar) taller.alRefrescar(async () => { INIT = await run('init'); if (['caja', 'inicio'].includes(VISTA)) refrescarVista(); });
 iniciar().then(() => ir('inicio', true)).catch(e => { $('main').innerHTML = vacio('No se pudo abrir la base de datos', 'alert', esc(e.message || e)); });

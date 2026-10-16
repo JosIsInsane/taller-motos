@@ -6,7 +6,7 @@ input,textarea,select,.sel,td,.note,.box{user-select:text}
 #h-extra{display:flex;gap:8px;align-items:center}
 .brand b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .side-foot{line-height:1.35}
-.kbd{display:inline-block;font:600 11px/1 Inter,system-ui;color:var(--mut);background:#fff;border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;padding:3px 5px;margin-left:6px}
+.kbd{display:inline-block;font:600 11px/1 Barlow,system-ui;color:var(--mut);background:#fff;border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;padding:3px 5px;margin-left:6px}
 .btn-p .kbd{background:rgba(255,255,255,.18);border-color:rgba(255,255,255,.3);color:#fff}
 .hint{font-size:12.5px;color:var(--mut)}
 .right{text-align:right}
@@ -110,6 +110,6 @@ input,textarea,select,.sel,td,.note,.box{user-select:text}
 /* comisión compartida */
 .reparto{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr);gap:14px;align-items:start;border-top:1px dashed var(--line);padding-top:12px;margin-top:2px}
 .reparto-ops>label{display:block;font-size:12.5px;font-weight:600;color:var(--ink2);margin-bottom:5px}
-.reparto .chip{cursor:pointer;font:600 13px Inter,system-ui;padding:7px 11px;border-radius:9px;border:1px solid var(--line);background:#fff;color:var(--ink2)}
+.reparto .chip{cursor:pointer;font:600 13px Barlow,system-ui;padding:7px 11px;border-radius:9px;border:1px solid var(--line);background:#fff;color:var(--ink2)}
 .reparto .chip.on{border-color:var(--brand6);background:var(--brand50);color:var(--brand7)}
 .reparto .pct{width:72px;text-align:right;padding:7px 9px}

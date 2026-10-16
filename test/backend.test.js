@@ -88,5 +88,53 @@ const throwsMsg = (f, re) => { try { f(); } catch (e) { assert.match(e.message, 
     const D = crearBackend(db4, { ahora: () => fecha }).api;
     const id = D.guardarTrabajo({ cliente_nombre: 'Viejo', descripcion: 'x', mano_obra: 100 }); assert.equal(D.trabajo(id).reparto, 100);
   });
+  // ---------- regresiones de la auditoría v1.2 ----------
+  const nuevoB = d => { const box = { f: d }; const X = crearBackend(new SQL.Database(), { ahora: () => box.f }).api; return { X, set: v => { box.f = v; } }; };
+  const emps = X => { X.guardarConfig({ empleados: [{ nombre: 'Pedro', puesto: 'Mecánico', salario: 1000, comision: 10 }] }); return X.init().empleados.find(e => e.nombre === 'Pedro').id; };
+  t('montos con coma de miles', () => {
+    const { X } = nuevoB(new Date(2026, 9, 7, 10)); const id = X.guardarTrabajo({ cliente_nombre: 'A', descripcion: 'x', mano_obra: '1,500' });
+    assert.equal(X.trabajo(id).total, 1500); assert.equal(X.agregarPago(id, { monto: '1,200.50', metodo: 'Efectivo' }).pagado, 1200.5);
+  });
+  t('no se paga dos veces una planilla ni una compra', () => {
+    const { X } = nuevoB(new Date(2026, 9, 7, 10)); emps(X); const f = X.planillaSemana('2026-10-05').filas[0];
+    X.pagarPlanilla(f.id, 'Efectivo'); throwsMsg(() => X.pagarPlanilla(f.id, 'Efectivo'), /ya está pagada/);
+    const c = X.guardarCompra({ descripcion: 'Tornillos', cantidad: 1, costo: 50, estado: 'Pagado', metodo: 'Efectivo' });
+    throwsMsg(() => X.pagarCompra(c, 'Efectivo'), /ya está pagada/);
+  });
+  t('fechas futuras bloqueadas', () => {
+    const { X } = nuevoB(new Date(2026, 9, 7, 10)); const id = X.guardarTrabajo({ cliente_nombre: 'A', descripcion: 'x', mano_obra: 100 });
+    throwsMsg(() => X.agregarPago(id, { monto: 50, metodo: 'Efectivo', fecha: '2027-01-01' }), /futura/);
+  });
+  t('día reabierto no se vuelve a cerrar solo', () => {
+    const { X } = nuevoB(new Date(2026, 9, 7, 10)); X.guardarGasto({ fecha: '2026-10-05', monto: 10, metodo: 'Efectivo' });
+    X.autoCierre(); assert.ok(X.cajaDia('2026-10-05').cerrado);
+    X.reabrirDia('2026-10-05'); X.autoCierre(); assert.equal(X.cajaDia('2026-10-05').cerrado, false);
+    X.guardarGasto({ fecha: '2026-10-05', monto: 5, metodo: 'Efectivo' }); X.cerrarDia('2026-10-05', 985, '');
+    assert.equal(X.cajaDia('2026-10-06').esperado, 985); // el día siguiente recalcula: 1000 - 15
+  });
+  t('comisión: no se paga doble al re-entregar, ni se pierde si la planilla ya se pagó', () => {
+    const { X, set } = nuevoB(new Date(2026, 9, 5, 10)); const P = emps(X);
+    const a = X.guardarTrabajo({ cliente_nombre: 'A', descripcion: 'x', mano_obra: 1000, mecanico_id: P }); X.cambiarEstado(a, 'Entregado');
+    const f1 = X.planillaSemana('2026-10-05').filas[0]; assert.equal(f1.comision, 100); X.pagarPlanilla(f1.id, 'Efectivo');
+    set(new Date(2026, 9, 13, 10)); X.cambiarEstado(a, 'Listo'); X.cambiarEstado(a, 'Entregado');
+    assert.equal(X.planillaSemana('2026-10-12').filas[0].comision, 0);
+    const b = X.guardarTrabajo({ cliente_nombre: 'B', descripcion: 'y', mano_obra: 500, mecanico_id: P });
+    X.pagarPlanilla(X.planillaSemana('2026-10-12').filas[0].id, 'Efectivo'); X.cambiarEstado(b, 'Entregado');
+    assert.equal(X.planillaSemana('2026-10-19').filas[0].comision, 50);
+  });
+  t('vale de una planilla pagada no se puede mover', () => {
+    const { X } = nuevoB(new Date(2026, 9, 7, 10)); const P = emps(X); const v = X.guardarVale({ fecha: '2026-10-06', empleado_id: P, monto: 300, metodo: 'Efectivo' });
+    X.pagarPlanilla(X.planillaSemana('2026-10-05').filas[0].id, 'Efectivo');
+    throwsMsg(() => X.guardarVale({ id: v, fecha: '2026-10-07', empleado_id: P, monto: 300, metodo: 'Efectivo' }), /pagada/);
+  });
+  t('empleado nuevo no aparece debiendo semanas anteriores', () => {
+    const { X } = nuevoB(new Date(2026, 9, 14, 10)); emps(X);
+    assert.equal(X.planillaSemana('2026-10-05').filas.length, 0); assert.equal(X.planillaSemana('2026-10-12').filas.length, 1);
+  });
+  t('trabajo cancelado no conserva garantía', () => {
+    const { X } = nuevoB(new Date(2026, 9, 7, 10)); const id = X.guardarTrabajo({ cliente_nombre: 'A', descripcion: 'x', mano_obra: 100, garantia_dias: 30 });
+    X.cambiarEstado(id, 'Entregado'); assert.ok(X.trabajo(id).vence); X.cambiarEstado(id, 'Cancelado'); assert.equal(X.trabajo(id).vence, '');
+  });
+  t('ids inexistentes dan error claro', () => { const { X } = nuevoB(new Date(2026, 9, 7, 10)); throwsMsg(() => X.borrarGasto(999), /no encontrado/i); throwsMsg(() => X.borrarVale(999), /no encontrado/i); });
   console.log(`\n${ok} pruebas OK`);
 })();

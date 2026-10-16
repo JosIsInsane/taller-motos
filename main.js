@@ -7,13 +7,22 @@ const XLSX = require('xlsx');
 const { crearBackend, utils } = require('./backend');
 
 app.setName('Taller');
-if (!app.requestSingleInstanceLock()) { app.quit(); }
+const OTRA_INSTANCIA = !app.requestSingleInstanceLock();
+if (OTRA_INSTANCIA) app.quit();
 
 let win = null, SQL = null, db = null, B = null, dbPath = '', ultimoGuardado = 0, sucioDesdeRespaldo = false;
 const DATA = () => app.getPath('userData');
 const FOTOS = () => path.join(DATA(), 'fotos');
 const hoy = () => utils.isoLocal(new Date());
 const sello = () => { const d = new Date(); return hoy() + '_' + String(d.getHours()).padStart(2, '0') + String(d.getMinutes()).padStart(2, '0'); };
+/** ¿La ruta está dentro de la carpeta base? (evita salir con ../) */
+const dentroDe = (base, ruta) => { const r = path.relative(path.resolve(base), path.resolve(ruta)); return !!r && !r.startsWith('..') && !path.isAbsolute(r); };
+const ESQUEMAS_EXTERNOS = ['https:', 'http:', 'whatsapp:', 'mailto:', 'tel:'];
+function abrirExterno(url) {
+  let u; try { u = new URL(String(url)); } catch (e) { return false; }
+  if (!ESQUEMAS_EXTERNOS.includes(u.protocol)) return false;
+  shell.openExternal(u.toString()); return true;
+}
 const limpioNombre = s => String(s || '').replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 80);
 
 // ------------------------------------------------------------ base de datos
@@ -93,7 +102,7 @@ async function abrirWhatsApp(tel, texto) {
   await shell.openExternal(`https://wa.me/${n}?text=${t}`); return 'web';
 }
 async function htmlAPdf(html, archivo) {
-  const w = new BrowserWindow({ show: false, webPreferences: { offscreen: true } });
+  const w = new BrowserWindow({ show: false, webPreferences: { offscreen: true, javascript: false, sandbox: true, contextIsolation: true, nodeIntegration: false } });
   try {
     await w.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
     const pdf = await w.webContents.printToPDF({ pageSize: 'Letter', printBackground: true, margins: { top: 0.3, bottom: 0.3, left: 0.3, right: 0.3 } });
@@ -122,11 +131,18 @@ async function exportarExcel() {
   return r.filePath;
 }
 function guardarFotos(trabajoId, fotos, etapa) {
+  trabajoId = Math.trunc(Number(trabajoId));
+  if (!(trabajoId > 0) || !B.api.trabajo(trabajoId)) throw new Error('Trabajo no encontrado');
+  etapa = String(etapa || 'foto').toLowerCase().replace(/[^a-z]/g, '').slice(0, 20) || 'foto';
+  if (!Array.isArray(fotos) || fotos.length > 30) throw new Error('Demasiadas fotos a la vez (máximo 30)');
   const dir = path.join(FOTOS(), 'T-' + String(trabajoId).padStart(4, '0'));
   fs.mkdirSync(dir, { recursive: true });
   return fotos.map((f, i) => {
     const nombre = `${etapa || 'foto'}_${sello()}_${Date.now() % 100000}_${i + 1}.jpg`;
-    fs.writeFileSync(path.join(dir, nombre), Buffer.from(f.base64, 'base64'));
+    const buf = Buffer.from(String((f && f.base64) || ''), 'base64');
+    if (!buf.length || buf.length > 15 * 1024 * 1024) throw new Error('Foto vacía o demasiado grande');
+    if (!(buf[0] === 0xFF && buf[1] === 0xD8)) throw new Error('Solo se aceptan fotos JPG');
+    fs.writeFileSync(path.join(dir, nombre), buf);
     const rel = path.join('T-' + String(trabajoId).padStart(4, '0'), nombre);
     B.api.agregarFoto(trabajoId, rel, etapa);
     return rel;
@@ -149,6 +165,8 @@ const SISTEMA = {
       const r = await dialog.showOpenDialog(win, { title: 'Elegí el respaldo a restaurar', defaultPath: carpetaRespaldos(), filters: [{ name: 'Respaldo del Taller', extensions: ['db'] }], properties: ['openFile'] });
       if (r.canceled || !r.filePaths[0]) return null;
       ruta = r.filePaths[0];
+    } else if (!(dentroDe(carpetaRespaldos(), ruta) && /\.db$/i.test(ruta))) {
+      throw new Error('Ese archivo no está en la carpeta de respaldos');
     }
     return restaurar(ruta);
   },
@@ -156,10 +174,14 @@ const SISTEMA = {
   whatsapp: (tel, texto) => abrirWhatsApp(tel, texto),
   reciboPDF: async (id) => { const f = await reciboPDF(id); shell.showItemInFolder(f); return f; },
   guardarFotos: (trabajoId, fotos, etapa) => { const r = guardarFotos(trabajoId, fotos, etapa); guardar(); return r; },
-  borrarFoto: (id) => { const f = B.api.borrarFoto(id); guardar(); if (f) { try { fs.unlinkSync(path.join(FOTOS(), f.archivo)); } catch (e) { /* ya no existe */ } } return true; },
-  abrirFoto: (rel) => shell.openPath(path.join(FOTOS(), rel)),
+  borrarFoto: (id) => { const f = B.api.borrarFoto(id); guardar(); if (f && dentroDe(FOTOS(), path.join(FOTOS(), f.archivo))) { try { fs.unlinkSync(path.join(FOTOS(), f.archivo)); } catch (e) { /* ya no existe */ } } return true; },
+  abrirFoto: (rel) => {
+    const ruta = path.join(FOTOS(), String(rel || ''));
+    if (!dentroDe(FOTOS(), ruta) || !/\.(jpe?g|png|webp)$/i.test(ruta)) throw new Error('Foto no válida');
+    return shell.openPath(ruta);
+  },
   abrirCarpetaFotos: (trabajoId) => { const d = path.join(FOTOS(), 'T-' + String(trabajoId).padStart(4, '0')); fs.mkdirSync(d, { recursive: true }); return shell.openPath(d); },
-  abrirEnlace: (url) => shell.openExternal(url),
+  abrirEnlace: (url) => abrirExterno(url),
   estadoActualizacion: () => Object.assign({ actual: app.getVersion(), empaquetado: app.isPackaged }, estadoAct),
   buscarActualizacion: async () => {
     if (!autoUpdater) return Object.assign({ actual: app.getVersion(), empaquetado: app.isPackaged }, estadoAct);
@@ -193,8 +215,10 @@ function iniciarActualizaciones() {
 }
 
 // ------------------------------------------------------------ IPC
+const remitenteValido = e => { try { return !!win && e.sender === win.webContents && new URL(e.senderFrame.url).protocol === 'file:'; } catch (er) { return false; } };
 ipcMain.handle('api', (e, fn, args) => {
-  if (!B.api[fn]) throw new Error('Función desconocida: ' + fn);
+  if (!remitenteValido(e)) throw new Error('Origen no permitido');
+  if (!Object.prototype.hasOwnProperty.call(B.api, fn) || typeof B.api[fn] !== 'function') throw new Error('Función desconocida: ' + fn);
   const antes = B.cambios();
   const r = B.api[fn](...(args || []));
   if (B.cambios() !== antes) guardar();
@@ -202,7 +226,8 @@ ipcMain.handle('api', (e, fn, args) => {
   return r;
 });
 ipcMain.handle('sys', async (e, fn, args) => {
-  if (!SISTEMA[fn]) throw new Error('Función desconocida: ' + fn);
+  if (!remitenteValido(e)) throw new Error('Origen no permitido');
+  if (!Object.prototype.hasOwnProperty.call(SISTEMA, fn)) throw new Error('Función desconocida: ' + fn);
   return SISTEMA[fn](...(args || []));
 });
 
@@ -212,13 +237,20 @@ function crearVentana() {
   win = new BrowserWindow({
     width: 1440, height: 900, minWidth: 1100, minHeight: 680, show: false, backgroundColor: '#F4F5F7', title: 'Taller — Sistema de gestión', icon: icono,
     autoHideMenuBar: true,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, spellcheck: true },
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, spellcheck: true },
   });
   Menu.setApplicationMenu(null);
   win.loadFile(path.join(__dirname, 'app', 'index.html'));
   win.once('ready-to-show', () => { win.maximize(); win.show(); });
-  win.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' }; });
-  win.webContents.on('will-navigate', (ev, url) => { if (!url.startsWith('file://')) { ev.preventDefault(); shell.openExternal(url); } });
+  win.webContents.setWindowOpenHandler(({ url }) => { abrirExterno(url); return { action: 'deny' }; });
+  win.webContents.on('will-navigate', (ev, url) => { if (url !== win.webContents.getURL()) { ev.preventDefault(); abrirExterno(url); } });
+  win.webContents.on('will-attach-webview', ev => ev.preventDefault());
+  // la pantalla avisa si hay un trabajo con cambios sin guardar (F5, Ctrl+R o cerrar la ventana)
+  win.webContents.on('will-prevent-unload', ev => {
+    const r = dialog.showMessageBoxSync(win, { type: 'warning', buttons: ['Salir sin guardar', 'Seguir editando'], defaultId: 1, cancelId: 1,
+      title: 'Cambios sin guardar', message: 'El trabajo abierto tiene cambios que no guardaste.', detail: 'Si salís ahora, esos cambios se pierden.' });
+    if (r === 0) ev.preventDefault();
+  });
   win.webContents.on('before-input-event', (ev, input) => {
     if (input.type === 'keyDown' && (input.key === 'F5' || (input.control && input.key.toLowerCase() === 'r'))) { win.webContents.reload(); ev.preventDefault(); }
     if (input.type === 'keyDown' && input.key === 'F12' && input.control && input.shift) win.webContents.toggleDevTools();
@@ -227,6 +259,7 @@ function crearVentana() {
 
 app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
 app.whenReady().then(async () => {
+  if (OTRA_INSTANCIA) return; // ya hay un Taller abierto: no tocar la base desde dos lugares
   try { await abrirBase(); }
   catch (e) { dialog.showErrorBox('No se pudo abrir la base de datos', String(e && e.stack || e)); app.quit(); return; }
   try { if (B.api.autoCierre()) guardar(); } catch (e) { /* nada */ }
@@ -239,5 +272,5 @@ app.whenReady().then(async () => {
   }, 60 * 1000);
   setInterval(() => { try { if (sucioDesdeRespaldo) respaldar('auto'); } catch (e) { /* nada */ } }, 30 * 60 * 1000);
 });
-app.on('before-quit', () => { try { if (db) { guardar(true); respaldar('auto'); } } catch (e) { /* nada */ } });
+app.on('before-quit', () => { try { if (db && !OTRA_INSTANCIA) { guardar(true); respaldar('auto'); } } catch (e) { /* nada */ } });
 app.on('window-all-closed', () => app.quit());

@@ -53,8 +53,8 @@ const CONFIG_INICIAL = {
 };
 
 const pad = (n, w = 4) => String(n).padStart(w, '0');
-const r2 = n => Math.round((Number(n) || 0) * 100) / 100;
-const num = v => { const n = parseFloat(v); return isNaN(n) ? 0 : n; };
+const num = v => { if (typeof v === 'number') return isFinite(v) ? v : 0; const n = parseFloat(String(v == null ? '' : v).replace(/[,\s]/g, '').replace(/^L/i, '')); return isNaN(n) ? 0 : n; };
+const r2 = n => Math.round(num(n) * 100) / 100;
 const txt = v => (v === undefined || v === null) ? '' : String(v).trim();
 const L = n => 'L ' + r2(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -94,6 +94,8 @@ function crearBackend(db, opciones = {}) {
     const ct = cols('trabajos');
     if (!ct.includes('mecanico2_id')) db.run('ALTER TABLE trabajos ADD COLUMN mecanico2_id INTEGER');
     if (!ct.includes('reparto')) db.run('ALTER TABLE trabajos ADD COLUMN reparto REAL DEFAULT 100');
+    if (!ct.includes('semana_comision')) db.run('ALTER TABLE trabajos ADD COLUMN semana_comision TEXT');
+    if (!cols('empleados').includes('alta')) db.run('ALTER TABLE empleados ADD COLUMN alta TEXT');
   })();
   if (!val("SELECT valor FROM config WHERE clave='inicio'")) {
     Object.entries(CONFIG_INICIAL).forEach(([k, v]) => run('INSERT OR IGNORE INTO config(clave, valor) VALUES (?, ?)', [k, JSON.stringify(v)]));
@@ -110,6 +112,7 @@ function crearBackend(db, opciones = {}) {
   const semanaCerrada = l => !!val('SELECT 1 FROM cierres_semana WHERE semana=?', [l]);
   function abierto(f, que) {
     if (!esFecha(f)) throw new Error('Fecha inválida');
+    if (f > hoy()) throw new Error(`No se puede ${que} con fecha futura (${fmt(f)}).`);
     if (diaCerrado(f)) throw new Error(`El día ${fmt(f)} ya tiene la caja cerrada. Para ${que}, reabrí ese día en "Caja del día".`);
   }
 
@@ -129,8 +132,9 @@ function crearBackend(db, opciones = {}) {
     t.saldo = r2(t.total - num(t.pagado));
     t.estado_pago = t.estado === 'Cancelado' ? 'Cancelado' : t.total <= 0 ? (num(t.pagado) > 0 ? 'Pagado' : 'Sin cobro') : t.saldo <= 0.004 ? 'Pagado' : 'Pendiente';
     t.utilidad = r2(t.total - num(t.costo_rep));
-    t.vence = t.entrega && num(t.garantia_dias) > 0 ? addDias(t.entrega, num(t.garantia_dias)) : '';
-    const fin = t.entrega || hoy();
+    const entregado = t.estado === 'Entregado' && t.entrega;
+    t.vence = entregado && num(t.garantia_dias) > 0 ? addDias(t.entrega, num(t.garantia_dias)) : '';
+    const fin = entregado ? t.entrega : hoy();
     t.dias = Math.max(0, Math.round((parseIso(fin) - parseIso(t.fecha || hoy())) / 86400000));
     t.moto = [t.marca, t.modelo, t.anio].filter(Boolean).join(' ');
     t.reparto = t.mecanico2_id ? num(t.reparto) || 50 : 100;
@@ -276,8 +280,19 @@ function crearBackend(db, opciones = {}) {
   function cambiarEstado(id, estado) {
     if (!ESTADOS.includes(estado)) throw new Error('Estado inválido');
     const t = get('SELECT * FROM trabajos WHERE id=?', [id]); if (!t) throw new Error('No se encontró el trabajo');
-    const entrega = estado === 'Entregado' ? (t.entrega || hoy()) : (estado === 'Cancelado' ? t.entrega : null);
-    run('UPDATE trabajos SET estado=?, entrega=? WHERE id=?', [estado, estado === 'Entregado' || estado === 'Cancelado' ? entrega : null, id]);
+    if (estado === 'Entregado') {
+      const entrega = t.estado === 'Entregado' && t.entrega ? t.entrega : hoy();
+      // la comisión cae en la semana de la entrega; si esa planilla ya se pagó, pasa a la siguiente semana sin pagar
+      // (si el trabajo ya se había entregado antes, conserva su semana original para no pagarla dos veces)
+      let sem = t.semana_comision || lunesDe(entrega);
+      if (!t.semana_comision) {
+        const mecs = [t.mecanico_id, t.mecanico2_id].filter(Boolean);
+        for (let i = 0; i < 60 && mecs.some(m => val("SELECT 1 FROM planilla WHERE semana=? AND empleado_id=? AND estado='Pagado'", [sem, m])); i++) sem = addDias(sem, 7);
+      }
+      run('UPDATE trabajos SET estado=?, entrega=?, semana_comision=? WHERE id=?', [estado, entrega, sem, id]);
+    } else {
+      run('UPDATE trabajos SET estado=?, entrega=? WHERE id=?', [estado, estado === 'Cancelado' ? t.entrega : null, id]);
+    }
     return trabajo(id);
   }
   function marcarAvisado(id) { run('UPDATE trabajos SET avisado=? WHERE id=?', [new Date().toISOString(), id]); return true; }
@@ -379,29 +394,31 @@ function crearBackend(db, opciones = {}) {
     if (!METODOS.includes(d.metodo)) throw new Error('Elegí el método de pago');
     abierto(f, 'registrar este gasto');
     if (num(d.id)) {
-      const v = get('SELECT * FROM gastos WHERE id=?', [num(d.id)]); abierto(v.fecha, 'editar este gasto');
+      const v = get('SELECT * FROM gastos WHERE id=?', [num(d.id)]); if (!v) throw new Error('Gasto no encontrado'); abierto(v.fecha, 'editar este gasto');
       run('UPDATE gastos SET fecha=?, categoria=?, descripcion=?, monto=?, metodo=? WHERE id=?', [f, txt(d.categoria), txt(d.descripcion), r2(d.monto), d.metodo, num(d.id)]); return num(d.id);
     }
     return run('INSERT INTO gastos(fecha, categoria, descripcion, monto, metodo) VALUES (?,?,?,?,?)', [f, txt(d.categoria), txt(d.descripcion), r2(d.monto), d.metodo]);
   }
-  function borrarGasto(id) { const v = get('SELECT * FROM gastos WHERE id=?', [id]); abierto(v.fecha, 'borrar este gasto'); run('DELETE FROM gastos WHERE id=?', [id]); return true; }
+  function borrarGasto(id) { const v = get('SELECT * FROM gastos WHERE id=?', [id]); if (!v) throw new Error('Gasto no encontrado'); abierto(v.fecha, 'borrar este gasto'); run('DELETE FROM gastos WHERE id=?', [id]); return true; }
   function guardarVale(d) {
     const f = esFecha(d.fecha) ? d.fecha : hoy();
     if (!num(d.empleado_id)) throw new Error('Elegí el empleado');
     if (num(d.monto) <= 0) throw new Error('El monto tiene que ser mayor que 0');
     if (!METODOS.includes(d.metodo)) throw new Error('Elegí el método de pago');
-    abierto(f, 'registrar este vale');
     const sem = lunesDe(f);
     if (val("SELECT 1 FROM planilla WHERE semana=? AND empleado_id=? AND estado='Pagado'", [sem, num(d.empleado_id)]))
       throw new Error('La planilla de ese empleado para esa semana ya está pagada. Registrá el vale en la semana siguiente.');
+    abierto(f, 'registrar este vale');
     if (num(d.id)) {
-      const v = get('SELECT * FROM vales WHERE id=?', [num(d.id)]); abierto(v.fecha, 'editar este vale');
+      const v = get('SELECT * FROM vales WHERE id=?', [num(d.id)]); if (!v) throw new Error('Vale no encontrado'); abierto(v.fecha, 'editar este vale');
+      if (val("SELECT 1 FROM planilla WHERE semana=? AND empleado_id=? AND estado='Pagado'", [lunesDe(v.fecha), v.empleado_id]))
+        throw new Error('Ese vale ya se descontó en una planilla pagada; no se puede cambiar.');
       run('UPDATE vales SET fecha=?, empleado_id=?, monto=?, metodo=?, nota=? WHERE id=?', [f, num(d.empleado_id), r2(d.monto), d.metodo, txt(d.nota), num(d.id)]); return num(d.id);
     }
     return run('INSERT INTO vales(fecha, empleado_id, monto, metodo, nota) VALUES (?,?,?,?,?)', [f, num(d.empleado_id), r2(d.monto), d.metodo, txt(d.nota)]);
   }
   function borrarVale(id) {
-    const v = get('SELECT * FROM vales WHERE id=?', [id]); abierto(v.fecha, 'borrar este vale');
+    const v = get('SELECT * FROM vales WHERE id=?', [id]); if (!v) throw new Error('Vale no encontrado'); abierto(v.fecha, 'borrar este vale');
     if (val("SELECT 1 FROM planilla WHERE semana=? AND empleado_id=? AND estado='Pagado'", [lunesDe(v.fecha), v.empleado_id])) throw new Error('Ese vale ya se descontó en una planilla pagada.');
     run('DELETE FROM vales WHERE id=?', [id]); return true;
   }
@@ -424,6 +441,8 @@ function crearBackend(db, opciones = {}) {
     return run('INSERT INTO compras(fecha, proveedor, inventario_id, descripcion, cantidad, costo, metodo, estado, fecha_pago, factura) VALUES (?,?,?,?,?,?,?,?,?,?)', p);
   }
   function pagarCompra(id, metodo, fecha) {
+    const v = get('SELECT * FROM compras WHERE id=?', [id]); if (!v) throw new Error('Compra no encontrada');
+    if (v.estado === 'Pagado') throw new Error('Esta compra ya está pagada.');
     const f = esFecha(fecha) ? fecha : hoy();
     if (!METODOS.includes(metodo)) throw new Error('Elegí el método de pago');
     abierto(f, 'registrar este pago');
@@ -441,7 +460,7 @@ function crearBackend(db, opciones = {}) {
     const dom = addDias(lunes, 6);
     const mo = r2(num(val(`SELECT SUM(CASE WHEN mecanico_id=? THEN mano_obra * (CASE WHEN mecanico2_id IS NULL THEN 100 ELSE COALESCE(reparto, 50) END) / 100.0 ELSE 0 END
         + CASE WHEN mecanico2_id=? THEN mano_obra * (100 - COALESCE(reparto, 50)) / 100.0 ELSE 0 END)
-      FROM trabajos WHERE (mecanico_id=? OR mecanico2_id=?) AND estado='Entregado' AND entrega BETWEEN ? AND ?`, [emp.id, emp.id, emp.id, emp.id, lunes, dom])));
+      FROM trabajos WHERE (mecanico_id=? OR mecanico2_id=?) AND estado='Entregado' AND (semana_comision=? OR (semana_comision IS NULL AND entrega BETWEEN ? AND ?))`, [emp.id, emp.id, emp.id, emp.id, lunes, lunes, dom])));
     const vales = num(val('SELECT SUM(monto) FROM vales WHERE empleado_id=? AND fecha BETWEEN ? AND ?', [emp.id, lunes, dom]));
     const salario = num(emp.salario), comision = r2(mo * num(emp.comision) / 100);
     if (p.estado === 'Pagado') return { ...p, empleado: emp.nombre, puesto: emp.puesto, salario: num(p.salario_pagado), comision: num(p.comision_pagada), vales: num(p.vales_pagados), neto: num(p.neto_pagado), mano_obra: mo };
@@ -449,11 +468,11 @@ function crearBackend(db, opciones = {}) {
   }
   function planillaSemana(semana) {
     const lunes = lunesDe(esFecha(semana) ? semana : hoy());
-    empleadosActivos().forEach(e => run('INSERT OR IGNORE INTO planilla(semana, empleado_id) VALUES (?, ?)', [lunes, e.id]));
+    empleadosActivos().filter(e => !e.alta || lunesDe(e.alta) <= lunes).forEach(e => run('INSERT OR IGNORE INTO planilla(semana, empleado_id) VALUES (?, ?)', [lunes, e.id]));
     const filas = all('SELECT p.* FROM planilla p WHERE p.semana=? ORDER BY p.id', [lunes]).map(p => {
       const emp = get('SELECT * FROM empleados WHERE id=?', [p.empleado_id]) || { id: p.empleado_id, nombre: '(empleado borrado)', salario: 0, comision: 0 };
       return calcPlanilla(p, emp, lunes);
-    }).filter(p => p.estado === 'Pagado' || (get('SELECT activo FROM empleados WHERE id=?', [p.empleado_id]) || {}).activo);
+    }).filter(p => p.estado === 'Pagado' || (get('SELECT activo FROM empleados WHERE id=?', [p.empleado_id]) || {}).activo || num(p.mano_obra) > 0 || num(p.vales) > 0);
     const vales = listarMov('vales', lunes, addDias(lunes, 6));
     const sum = (a, k, f) => r2(a.filter(f || (() => true)).reduce((s, x) => s + num(x[k]), 0));
     return { semana: lunes, filas, vales, tot: { neto: sum(filas, 'neto'), pendiente: sum(filas, 'neto', x => x.estado !== 'Pagado'),
@@ -467,6 +486,7 @@ function crearBackend(db, opciones = {}) {
   }
   function pagarPlanilla(id, metodo, fecha) {
     const p = get('SELECT * FROM planilla WHERE id=?', [id]); if (!p) throw new Error('Fila de planilla no encontrada');
+    if (p.estado === 'Pagado') throw new Error('Esta planilla ya está pagada.');
     if (!METODOS.includes(metodo)) throw new Error('Elegí el método de pago');
     const f = esFecha(fecha) ? fecha : hoy(); abierto(f, 'registrar este pago de planilla');
     const emp = get('SELECT * FROM empleados WHERE id=?', [p.empleado_id]);
@@ -534,11 +554,20 @@ function crearBackend(db, opciones = {}) {
     run('INSERT INTO cierres(fecha, tipo, datos, efectivo_esperado, efectivo_contado, diferencia, nota, cerrado_en) VALUES (?,?,?,?,?,?,?,?)',
       [f, tipo === 'automático' ? 'automático' : 'manual', JSON.stringify(datos), esperado, tieneConteo ? r2(contado) : null,
         tieneConteo ? r2(num(contado) - esperado) : null, txt(nota), new Date().toISOString()]);
+    if (tipo !== 'automático') setCfg('reabiertos', (cfg('reabiertos') || []).filter(x => x !== f));
+    // si se volvió a cerrar un día ya pasado, los días siguientes de la semana recalculan su efectivo esperado
+    const dom = addDias(lunesDe(f), 6);
+    all('SELECT * FROM cierres WHERE fecha > ? AND fecha <= ?', [f, dom]).forEach(c => {
+      const esp = esperadoEnCaja(c.fecha);
+      run('UPDATE cierres SET efectivo_esperado=?, diferencia=? WHERE fecha=?', [esp, c.efectivo_contado === null ? null : r2(num(c.efectivo_contado) - esp), c.fecha]);
+    });
     return cajaDia(f);
   }
   function reabrirDia(fecha) {
     if (semanaCerrada(lunesDe(fecha))) throw new Error('La semana de ese día ya tiene cierre oficial. Reabrí primero la semana.');
-    run('DELETE FROM cierres WHERE fecha=?', [fecha]); return cajaDia(fecha);
+    run('DELETE FROM cierres WHERE fecha=?', [fecha]);
+    if (fecha < hoy()) setCfg('reabiertos', [...new Set([...(cfg('reabiertos') || []), fecha])]);
+    return cajaDia(fecha);
   }
   /** Cierra automáticamente todos los días pasados que nadie cerró (corre al abrir el programa y cada minuto). */
   function autoCierre() {
@@ -548,7 +577,8 @@ function crearBackend(db, opciones = {}) {
     let desde = [cfg('inicio') || hoy(), ...primeros].sort()[0];
     if (desde < addDias(ayer, -400)) desde = addDias(ayer, -400);
     let n = 0;
-    for (let d = desde; d <= ayer; d = addDias(d, 1)) if (!diaCerrado(d)) { cerrarDia(d, null, 'Cierre automático a medianoche', 'automático'); n++; }
+    const reabiertos = new Set(cfg('reabiertos') || []);
+    for (let d = desde; d <= ayer; d = addDias(d, 1)) if (!diaCerrado(d) && !reabiertos.has(d)) { cerrarDia(d, null, 'Cierre automático a medianoche', 'automático'); n++; }
     return n;
   }
   function semanaCaja(semana) {
@@ -719,7 +749,7 @@ function crearBackend(db, opciones = {}) {
           if (!txt(e.nombre)) return;
           const p = [txt(e.nombre), txt(e.puesto), r2(e.salario), r2(e.comision), e.activo === false || e.activo === 0 || e.activo === 'No' ? 0 : 1];
           if (num(e.id)) run('UPDATE empleados SET nombre=?, puesto=?, salario=?, comision=?, activo=? WHERE id=?', [...p, num(e.id)]);
-          else run('INSERT INTO empleados(nombre, puesto, salario, comision, activo) VALUES (?,?,?,?,?)', p);
+          else run('INSERT INTO empleados(nombre, puesto, salario, comision, activo, alta) VALUES (?,?,?,?,?,?)', [...p, hoy()]);
         });
       }
       return init();
